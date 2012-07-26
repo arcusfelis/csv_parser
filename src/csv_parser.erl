@@ -11,13 +11,13 @@ read_record(B, M) ->
     {[Field|Fields], B2, M2}.
 
 
-read_record_delimeter(<<$,, B>>, M) ->
+read_record_delimeter(<<$,, B/binary>>, M) ->
     read_record(B, M);
-read_record_delimeter(<<"\r\n", B>>, M) ->
+read_record_delimeter(<<"\r\n", B/binary>>, M) ->
     {[], B, M};
-read_record_delimeter(<<"\n", B>>, M) ->
+read_record_delimeter(<<"\n", B/binary>>, M) ->
     {[], B, M};
-read_record_delimeter(<<"\r", B>>, M) ->
+read_record_delimeter(<<"\r", B/binary>>, M) ->
     {[], B, M};
 read_record_delimeter(<<>>, undefined) ->
     {[], <<>>, undefined};
@@ -41,9 +41,9 @@ read_field(B, M) ->
 read_non_escaped_field(B, M) ->
     case binary:match(B, [<<$,>>, <<$\n>>, <<$\r>>]) of
         {S, _L} ->
-            BS = 8*S,
             %% Field-delimeter was found
-            <<Field:BS/binary, B2/binary>> = B,
+            %% S in a length bytes.
+            <<Field:S/binary, B2/binary>> = B,
             {Field, B2, M};
         nomatch when M =:= undefined ->
             {B, <<>>, undefined};
@@ -71,27 +71,53 @@ read_escaped_field(B, M) ->
             {<<B/binary, Field/binary>>, B2, M2}
     end.
 
+-ifdef(TEST).                          
+-include_lib("eunit/include/eunit.hrl").  
+                                          
+read_record_test_() ->                             
+    [?_assertEqual(read_record(<<"a,b,c">>, undefined), 
+                   {[<<$a>>, <<$b>>, <<$c>>], <<>>, undefined})
+    ].
+
+-endif.
 
 
 -ifdef(BENCHMARK).
 
+run_read_record(B, M) ->
+    read_record(B, M).
+
 read_record_benchmark(N) ->
-    Xs = gen_record(N, 1000),
-    emark:start(?MODULE, read_record, 2),
-    [?MODULE:read_record(X, undefined) || X <- Xs],
+    Xs = gen_records(N, 100, 100),
+    emark:start(?MODULE, run_read_record, 2),
+    [?MODULE:run_read_record(X, undefined) || X <- Xs],
     ok.
 
 
-gen_record(0, L) -> [];
-gen_record(N, L) when N > 0 ->
-    Field = simple_string(L),
-    [ <<Field/binary, $\n>> | gen_record(N-1, L)].
+gen_records(0, _L1, _L2) ->
+    [];
+gen_records(N, L1, L2) ->
+    [gen_record(L1, L2) | gen_records(N-1, L1, L2)].
+    
+
+gen_record(N, L) ->
+    bjoin(gen_record1(N, L), <<$,>>).
+
+
+gen_record1(0, L) -> [];
+gen_record1(N, L) when N > 0 ->
+    [ simple_string(L) | gen_record1(N-1, L)].
 
 
 
 simple_string(L) ->
     Rand = crypto:rand_bytes(L),
     << <<X>> || <<X>> <= Rand, X =/= $", X =/= $\n, X =/= $\r, X =/= $,>>.
+
+
+bjoin([B|Bs], Del) ->
+    X = << <<Del/binary, B/binary>> || B <- Bs >>,
+    <<B/binary, X/binary>>.
 
 
 -endif.
