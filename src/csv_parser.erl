@@ -88,7 +88,7 @@ read_record2(B, S) ->
 read_record_delimeter(<<",", B/binary>>, S) ->
     read_record2(B, S);
 read_record_delimeter(<<"\r">>, S) when ?MORE(S) ->
-    %% see the "More at the gap (test 2)." test.
+    %% see the "More in rhe break (test 2)." test.
     {B, S1} = more(S),
     read_record_delimeter(<<"\r", B/binary>>, S1);
 read_record_delimeter(<<"\r\n", B/binary>>, S) ->
@@ -143,7 +143,7 @@ read_escaped_field(B, S=#csvp{quote_delim_cp = Pat}) ->
                     {<<A/binary, $", Field/binary>>, B3, S1};
                 <<>> when ?MORE(S) -> 
                     %% The binary was splited beetween 2 dquotes.
-                    %% see the "More at the gap." test.
+                    %% see the "More in rhe break." test.
                     {B2, S1} = more(S),
                     B3 = <<B/binary, B2/binary>>,
                     read_escaped_field(B3, S1);
@@ -151,7 +151,7 @@ read_escaped_field(B, S=#csvp{quote_delim_cp = Pat}) ->
                     {A, B1, S}
             end;
         [_] when ?MORE(S) ->
-            %% see "More at the gap (test 3).".
+            %% see "More in rhe break (test 3).".
             %% get more
             {B1, S1} = more(S),
             {Field, B2, S2} = read_escaped_field(B1, S1),
@@ -166,16 +166,16 @@ read_record_test_() ->
                    {[<<$a>>, <<$b>>, <<$c>>], <<>>, #csvp{}})
     ,?_assertEqual(read_record2(<<>>, #csvp{}), 
                    {[], <<>>, #csvp{}})
-    ,{"More at the gap."
+    ,{"More in rhe break."
      ,?_assertEqual(read_record2(<<$\", $a, $\">>, 
                                  hide_binary(<<$\", $\a, $\">>, #csvp{})), 
                    {[<<$a, $\", $a>>], <<>>, #csvp{}})}
-    ,{"More at the gap (test 2)."
+    ,{"More in the break (test 2)."
      ,?_assertEqual(read_records(hide_binary(<<"a\r">>,
                                              hide_binary(<<"\nb">>, #csvp{})),
                                  2),
                     {[[<<$a>>], [<<$b>>]], #csvp{}})}
-    ,{"More at the gap (test 3)."
+    ,{"More in rhe break (test 3)."
      ,?_assertEqual(read_record2(<<$\", $a>>, 
                                  hide_binary(<<$\a, $\">>, #csvp{})), 
                    {[<<"aa">>], <<>>, #csvp{}})}
