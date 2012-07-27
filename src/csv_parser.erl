@@ -273,9 +273,42 @@ run_property_testing_case() ->
 prop_read_records() ->
     ?FORALL(DecodedRecords, records(),
         equals(DecodedRecords,
-            extract_records(
-                read_records(binary_parser(encode_records(DecodedRecords)),
-                             length(DecodedRecords))))).
+               encode_than_decode_records(DecodedRecords))).
+
+encode_than_decode_records(DecodedRecords) ->
+    EncodedRecords = encode_records(DecodedRecords),
+    RowsCount = length(DecodedRecords),
+    Parser = binary_parser(EncodedRecords),
+    read_records(Parser, RowsCount).
+
+
+prop_more_fun() ->
+    ?FORALL(DecodedRecords, records(),
+        equals(DecodedRecords,
+               encode_than_tokenize_then_decode_records(DecodedRecords))).
+
+
+encode_than_tokenize_then_decode_records(DecodedRecords) ->
+    EncodedRecords = encode_records(DecodedRecords),
+    Tokenized = bin_split(EncodedRecords),
+    RowsCount = length(DecodedRecords),
+    Parser = hide_binaries(Tokenized, #csvp{}),
+    read_records(Parser, RowsCount).
+
+
+bin_split(B) when is_binary(B) ->
+    [<<X>> || <<X>> <= B].
+
+
+hide_binaries(Bins, S=#csvp{more_fun = M}) ->
+    S#csvp{more_fun = hide_binaries_hof(Bins ++ [M])}.
+
+
+hide_binaries_hof([M]) ->
+    M;
+hide_binaries_hof([B|Bs]) ->
+    fun() -> {B, hide_binaries_hof(Bs)} end.
+
 
 extract_records({Rs, _P}) ->
     Rs.

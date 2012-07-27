@@ -34,7 +34,7 @@ decode(#converter{name = RecordName, field_positions = Ps}, CsvList) ->
     CsvTuple = list_to_tuple(CsvList),
     Fields = [case Pos of 
                    0 -> undefined; 
-                   _ -> erlang:element(Pos, CsvTuple)
+                _ -> try erlang:element(Pos, CsvTuple) catch _:_ -> throw([Pos, CsvTuple]) end
               end || Pos <- Ps],
     list_to_tuple([RecordName|Fields]).
 
