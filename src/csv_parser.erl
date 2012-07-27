@@ -5,7 +5,14 @@
          binary_parser/1]).
 
 -ifdef(BENCHMARK).
+-define(USE_COMMONS, 1).
 -include_lib("emark/include/emark.hrl").
+-endif.
+
+-ifdef(TEST).
+-define(USE_COMMONS, 1).
+-include_lib("proper/include/proper.hrl").
+-include_lib("eunit/include/eunit.hrl").
 -endif.
 
 
@@ -47,7 +54,7 @@ read_record(S=#csvp{}) ->
     {Fields, hide_binary(B2, S2)}.
 
 
-read_records(S=#csvp{}, N) when N > 0, ?MORE(S) ->
+read_records(S=#csvp{}, N) when is_integer(N), N > 0, ?MORE(S) ->
     {B, S1} = more(S),
     read_records2(B, S1, N, []);
 %% Already EOF?
@@ -163,8 +170,8 @@ read_escaped_field(B, S=#csvp{quote_delim_cp = Pat}) ->
             {<<B/binary, Field/binary>>, B2, S2}
     end.
 
+
 -ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
 
 read_record_test_() ->
     [?_assertEqual(read_record2(<<"a,b,c">>, #csvp{}),
@@ -173,7 +180,7 @@ read_record_test_() ->
                    {[<<$a>>, <<>>, <<$c>>], <<>>, #csvp{}})
     ,?_assertEqual(read_record2(<<",">>, #csvp{}),
                    {[<<>>, <<>>], <<>>, #csvp{}})
-    ,?_assertEqual(read_records(hide_binary(<<"a,\nc,d">>, #csvp{}), 2),
+    ,?_assertEqual(read_records(binary_parser(<<"a,\nc,d">>), 2),
                    {[[<<$a>>, <<>>], [<<$c>>, <<$d>>]], #csvp{}})
     ,?_assertEqual(read_record2(<<>>, #csvp{}),
                    {[], <<>>, #csvp{}})
@@ -183,19 +190,23 @@ read_record_test_() ->
                    {[<<$a, $\", $a>>], <<>>, #csvp{}})}
     ,{"More in the break (test 2)."
      ,?_assertEqual(read_records(hide_binary(<<"a\r">>,
-                                             hide_binary(<<"\nb">>, #csvp{})),
+                                             binary_parser(<<"\nb">>)),
                                  2),
                     {[[<<$a>>], [<<$b>>]], #csvp{}})}
     ,{"More in rhe break (test 3)."
      ,?_assertEqual(read_record2(<<$\", $a>>,
-                                 hide_binary(<<$\a, $\">>, #csvp{})),
+                                 binary_parser(<<$\a, $\">>)),
                    {[<<"aa">>], <<>>, #csvp{}})}
+    ,?_assertEqual(read_records(binary_parser(<<"\na">>), 3),
+                   {[[<<>>], [<<$a>>]], undefined})
+    ,?_assertEqual(read_records(binary_parser(<<"\na\n">>), 3),
+                   {[[<<>>], [<<$a>>]], undefined})
+%% [[<<192>>,<<38,125,241,31>>],[<<50,170,82,49>>,<<>>],[<<>>,<<43,177>>],[<<202,126,255>>,<<77,233,198>>]]
     ].
 
 
 parse(V, R) ->
-    P = #csvp{},
-    {Rs, _P1} = read_records(hide_binary(list_to_binary(V), P), 100),
+    {Rs, _P1} = read_records(binary_parser(list_to_binary(V)), 100),
     [list_to_tuple([binary_to_list(Field) || Field <- Rec])
             || Rec <- Rs] ++ R.
 
@@ -241,6 +252,75 @@ parse_test_() ->
 %     , ?_assertThrow({ecsv_exception,bad_record_size, _, _},
 %                     parse("1A,1B,1C\n2A,2B\n", []))}
     ].
+
+%% -------------------------------------------------------------------
+%% Property Testing
+%% -------------------------------------------------------------------
+
+
+run_property_testing_test_() ->
+    {timeout, 5000, fun run_property_testing_case/0}.
+
+
+run_property_testing_case() ->
+    EunitLeader = erlang:group_leader(),
+    erlang:group_leader(whereis(user), self()),
+    Res = proper:module(?MODULE, [{constraint_tries, 500}]),
+    erlang:group_leader(EunitLeader, self()),
+    ?assertEqual([], Res).
+
+
+prop_read_records() ->
+    ?FORALL(DecodedRecords, records(),
+        equals(DecodedRecords,
+            extract_records(
+                read_records(binary_parser(encode_records(DecodedRecords)),
+                             length(DecodedRecords))))).
+
+extract_records({Rs, _P}) ->
+    Rs.
+
+%% @doc Generate `[[binary()]]' with fixed count of binaries.
+-spec records() -> proper_types:type().
+records() ->
+    ?SUCHTHAT(Records, 
+              records2(),
+              Records =:= [] orelse lists:last(Records) =/= [<<>>]).
+
+records2() ->
+    ?LET(FieldCount,
+         range(1, 100),
+         list(record(FieldCount))).
+
+
+-spec record(non_neg_integer()) -> proper_types:type().
+record(FieldCount) ->
+    vector(FieldCount, binary()).
+
+
+encode_records_test_() ->
+    [?_assertEqual(encode_records([[<<>>],[<<0>>]]), <<$\n, 0>>)].
+
+encode_records(Rs) ->
+    Rs1 = [encode_fields(R) || R <- Rs],
+    bjoin(Rs1, <<$\n>>).
+
+encode_fields(Fs) ->
+    Fs1 = [encode_field(F) || F <- Fs],
+    bjoin(Fs1, <<$,>>).
+
+encode_field(F) ->
+    case binary:match(F, [<<$,>>, <<$\n>>, <<$\r>>, <<$">>]) of
+        nomatch ->
+            F; %% no changes
+        _SL ->
+            F1 = binary:replace(F, <<$">>, <<$", $">>, [global]),
+            escape_field(F1)
+    end.
+
+escape_field(F1) ->
+    <<$", F1/binary, $">>.
+    
 
 -endif.
 
@@ -295,7 +375,13 @@ simple_string(L) ->
     Rand = crypto:rand_bytes(L),
     << <<X>> || <<X>> <= Rand, X =/= $", X =/= $\n, X =/= $\r, X =/= $,>>.
 
+-endif.
 
+
+-ifdef(USE_COMMONS).
+
+bjoin([], _Del) ->
+    <<>>;
 bjoin([B|Bs], Del) ->
     X = << <<Del/binary, B/binary>> || B <- Bs >>,
     <<B/binary, X/binary>>.
