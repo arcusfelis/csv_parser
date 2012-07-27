@@ -1,15 +1,15 @@
 -module(csv_record).
--export([create_convertor/2,
+-export([create_converter/2,
          decode/2]).
 
--record(convertor, {
+-record(converter, {
         name :: atom(),
         %% Stores positions of required fields in the CSV file in
         %% required order.
         field_positions :: [non_neg_integer()]
 }).
 
-%% @doc Convertors allows convert data cvs file records to Erlang records.
+%% @doc Converters allows convert data cvs file records to Erlang records.
 %%      `Record' is the wanted format: 
 %%      `#product{name = <<"Name">>, price = <<"Price">>}'.
 %%      `CsvHeaders' is usually a first record in a CSV file:
@@ -17,20 +17,20 @@
 %%
 %%      Fields in the `Record' can be skipped or in the different
 %%      with the file order.
--spec create_convertor(Record, CsvHeaders) -> Convertor when
+-spec create_converter(Record, CsvHeaders) -> Converter when
     Record :: RecordName | FieldName,
     RecordName :: atom(),
     FieldName :: binary(),
-    Convertor :: tuple(),
+    Converter :: tuple(),
     CsvHeaders :: [FieldName].
 
-create_convertor(Rec, CsvHeader) ->
+create_converter(Rec, CsvHeader) ->
     [RecordName | RecFieldNames] = tuple_to_list(Rec),
     Ps = find_field_positions(RecFieldNames, CsvHeader),
-    #convertor{name=RecordName, field_positions=Ps}.
+    #converter{name=RecordName, field_positions=Ps}.
 
 
-decode(#convertor{name = RecordName, field_positions = Ps}, CsvList) ->
+decode(#converter{name = RecordName, field_positions = Ps}, CsvList) ->
     CsvTuple = list_to_tuple(CsvList),
     Fields = [case Pos of 
                    0 -> undefined; 
@@ -69,26 +69,26 @@ calc_pos(_, [], _) ->
 -record(product, {name, price}).
 -record(book, {position, title}).
 
-product_convertor() ->
-    create_convertor(#product{name = <<"Name">>, price = <<"Price">>}, 
+product_converter() ->
+    create_converter(#product{name = <<"Name">>, price = <<"Price">>}, 
                      [<<"Name">>, <<"Count">>, <<"Price">>]).
 
-book_convertor() ->
-    create_convertor(#book{title = <<"Title">>}, 
+book_converter() ->
+    create_converter(#book{title = <<"Title">>}, 
                      [<<"Title">>]).
 
-create_convertor_test_() ->                             
-    [?_assertEqual(create_convertor(#product{name = <<"Name">>, price = <<"Price">>}, 
+create_converter_test_() ->                             
+    [?_assertEqual(create_converter(#product{name = <<"Name">>, price = <<"Price">>}, 
                                     [<<"Name">>, <<"Count">>, <<"Price">>]), 
-                   #convertor{name = product, field_positions = [1,3]})
+                   #converter{name = product, field_positions = [1,3]})
     ].
 
 decode_test_() ->                             
-    [?_assertEqual(decode(product_convertor(),  
+    [?_assertEqual(decode(product_converter(),  
                           [<<"microphone">>, <<"10">>, <<"30">>]), 
                    #product{name = <<"microphone">>, price = <<"30">>})
     ,{"Test a skipped field."
-     ,?_assertEqual(decode(book_convertor(),  
+     ,?_assertEqual(decode(book_converter(),  
                           [<<"Code Complete">>]), 
                     #book{title = <<"Code Complete">>, position = undefined})}
     ].

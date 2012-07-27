@@ -1,5 +1,8 @@
 -module(csv_parser).
--compile(export_all).
+-export([read_record/1,
+         read_records/2,
+         file_parser/1,
+         binary_parser/1]).
 
 -ifdef(BENCHMARK).
 -include_lib("emark/include/emark.hrl").
@@ -14,30 +17,15 @@
             binary:compile_pattern(<<$">>)
         }).
 -define(NO_MORE(S), (S#csvp.more_fun =:= undefined)).
-
-
-
-
-prof() ->
-    csv_parser:read_record2(<<"a,b,c,a,s,d,g,u,y,e,q,w,e,r,t,y,u,i">>, #csvp{}).
-
-
-bench() ->
-    {ok, Fd} = file:open("example.csv", [binary]),
-    P = file_parser(Fd),
-    bench_cycle(P, 100, 100000).
-
-
-bench_cycle(P, L, N) when N > 0 ->
-    %% Ignore records
-    {_R, P1} = read_records(P, L),
-    bench_cycle(P1, L, N-L);
-bench_cycle(_P, _L, _N) ->
-    ok.
+-define(MORE(S), (S#csvp.more_fun =/= undefined)).
 
 
 file_parser(Fd) ->
     #csvp{more_fun=file_reader_hof(Fd)}.
+
+
+binary_parser(Bin) ->
+    hide_binary(Bin, #csvp{}).
 
 
 file_reader_hof(Fd) ->
@@ -48,16 +36,19 @@ file_reader_hof(Fd) ->
             end
         end.
 
-
-read_record(S=#csvp{more_fun=M}) ->
+more(S=#csvp{more_fun = M}) when is_function(M) ->
     {B, M1} = M(),
-    {Fields, B2, S2} = read_record2(B, S#csvp{more_fun=M1}),
+    {B, S#csvp{more_fun = M1}}.
+
+
+read_record(S=#csvp{}) ->
+    {B, S1} = more(S),
+    {Fields, B2, S2} = read_record2(B, S1),
     {Fields, hide_binary(B2, S2)}.
 
 
-read_records(S=#csvp{more_fun=M}, N) when N > 0, is_function(M) ->
-    {B, M1} = M(),
-    S1 = S#csvp{more_fun=M1},
+read_records(S=#csvp{}, N) when N > 0, ?MORE(S) ->
+    {B, S1} = more(S),
     read_records2(B, S1, N, []);
 %% Already EOF?
 read_records(S=#csvp{more_fun=undefined}, _N) ->
@@ -85,17 +76,21 @@ hide_binary(B2, S=#csvp{more_fun=M}) ->
 
 read_record2(<<>>, S=#csvp{more_fun=undefined}) ->
     {[], <<>>, S};
-read_record2(<<>>, S=#csvp{more_fun=M}) ->
-    {B, M1} = M(),
-    {[], B, S#csvp{more_fun=M1}};
+read_record2(<<>>, S=#csvp{}) ->
+    {B, S1} = more(S),
+    {[], B, S1};
 read_record2(B, S) ->
     {Field,  B1, S1} = read_field(B, S),
     {Fields, B2, S2} = read_record_delimeter(B1, S1),
     {[Field|Fields], B2, S2}.
 
 
-read_record_delimeter(<<$,, B/binary>>, S) ->
+read_record_delimeter(<<",", B/binary>>, S) ->
     read_record2(B, S);
+read_record_delimeter(<<"\r">>, S) when ?MORE(S) ->
+    %% see the "More at the gap (test 2)." test.
+    {B, S1} = more(S),
+    read_record_delimeter(<<"\r", B/binary>>, S1);
 read_record_delimeter(<<"\r\n", B/binary>>, S) ->
     {[], B, S};
 read_record_delimeter(<<"\n", B/binary>>, S) ->
@@ -106,9 +101,9 @@ read_record_delimeter(<<" ", B/binary>>, S) ->
     read_record_delimeter(B, S);
 read_record_delimeter(<<>>, S = #csvp{more_fun = undefined}) ->
     {[], <<>>, S};
-read_record_delimeter(<<>>, S) ->
+read_record_delimeter(<<>>, S=#csvp{}) ->
     %% get more
-    {B, S1} = S(),
+    {B, S1} = more(S),
     case B of
         <<>> -> 
             {[], B, S1}; %% eof
@@ -133,9 +128,7 @@ read_non_escaped_field(B, S=#csvp{non_escape_delim_cp = Pat}) ->
         nomatch when ?NO_MORE(S) ->
             {B, <<>>, S};
         nomatch ->
-            M = S#csvp.more_fun,
-            {B1, M1} = M(),
-            S1 = S#csvp{more_fun=M1},
+            {B1, S1} = more(S),
             {Field, B2, S2} = read_non_escaped_field(B1, S1),
             {<<B/binary, Field/binary>>, B2, S2}
     end.
@@ -148,12 +141,19 @@ read_escaped_field(B, S=#csvp{quote_delim_cp = Pat}) ->
                 <<$", B2/binary>> -> %% A ++ 2QUOTE ++ B1
                     {Field, B3, S1} = read_escaped_field(B2, S),
                     {<<A/binary, $", Field/binary>>, B3, S1};
+                <<>> when ?MORE(S) -> 
+                    %% The binary was splited beetween 2 dquotes.
+                    %% see the "More at the gap." test.
+                    {B2, S1} = more(S),
+                    B3 = <<B/binary, B2/binary>>,
+                    read_escaped_field(B3, S1);
                 _ ->
                     {A, B1, S}
             end;
-        [] when ?NO_MORE(S) ->
+        [_] when ?MORE(S) ->
+            %% see "More at the gap (test 3).".
             %% get more
-            {B1, S1} = S(),
+            {B1, S1} = more(S),
             {Field, B2, S2} = read_escaped_field(B1, S1),
             {<<B/binary, Field/binary>>, B2, S2}
     end.
@@ -166,6 +166,19 @@ read_record_test_() ->
                    {[<<$a>>, <<$b>>, <<$c>>], <<>>, #csvp{}})
     ,?_assertEqual(read_record2(<<>>, #csvp{}), 
                    {[], <<>>, #csvp{}})
+    ,{"More at the gap."
+     ,?_assertEqual(read_record2(<<$\", $a, $\">>, 
+                                 hide_binary(<<$\", $\a, $\">>, #csvp{})), 
+                   {[<<$a, $\", $a>>], <<>>, #csvp{}})}
+    ,{"More at the gap (test 2)."
+     ,?_assertEqual(read_records(hide_binary(<<"a\r">>,
+                                             hide_binary(<<"\nb">>, #csvp{})),
+                                 2),
+                    {[[<<$a>>], [<<$b>>]], #csvp{}})}
+    ,{"More at the gap (test 3)."
+     ,?_assertEqual(read_record2(<<$\", $a>>, 
+                                 hide_binary(<<$\a, $\">>, #csvp{})), 
+                   {[<<"aa">>], <<>>, #csvp{}})}
     ].
 
 
