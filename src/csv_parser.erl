@@ -11,9 +11,9 @@
 
 -record(csvp, {
         more_fun,
-        non_escape_delim_cp = 
+        non_escape_delim_cp =
             binary:compile_pattern([<<$,>>, <<$\n>>, <<$\r>>]),
-        quote_delim_cp = 
+        quote_delim_cp =
             binary:compile_pattern(<<$">>)
         }).
 -define(NO_MORE(S), (S#csvp.more_fun =:= undefined)).
@@ -57,10 +57,10 @@ read_records(S=#csvp{more_fun=undefined}, _N) ->
 
 read_records2(B, S, 0, Rs) ->
     {lists:reverse(Rs), hide_binary(B, S)};
-        
+
 read_records2(B, S, N, Rs) ->
     case read_record2(B, S) of
-        {[], _, _} -> 
+        {[], _, _} ->
             %% EOF
             {lists:reverse(Rs), undefined};
         {Fields, B2, S2} ->
@@ -86,7 +86,12 @@ read_record2(B, S) ->
 
 
 read_record_delimeter(<<",", B/binary>>, S) ->
-    read_record2(B, S);
+    case read_record2(B, S) of
+        {[], B2, S2} ->
+            {[<<>>], B2, S2};
+        Result ->
+            Result
+    end;
 read_record_delimeter(<<"\r">>, S) when ?MORE(S) ->
     %% see the "More in rhe break (test 2)." test.
     {B, S1} = more(S),
@@ -105,12 +110,12 @@ read_record_delimeter(<<>>, S=#csvp{}) ->
     %% get more
     {B, S1} = more(S),
     case B of
-        <<>> -> 
+        <<>> ->
             {[], B, S1}; %% eof
         _ ->
             read_record_delimeter(B, S1)
     end.
-            
+
 
 read_field(<<$", B/binary>>, S) ->
     read_escaped_field(B, S);
@@ -141,7 +146,7 @@ read_escaped_field(B, S=#csvp{quote_delim_cp = Pat}) ->
                 <<$", B2/binary>> -> %% A ++ 2QUOTE ++ B1
                     {Field, B3, S1} = read_escaped_field(B2, S),
                     {<<A/binary, $", Field/binary>>, B3, S1};
-                <<>> when ?MORE(S) -> 
+                <<>> when ?MORE(S) ->
                     %% The binary was splited beetween 2 dquotes.
                     %% see the "More in rhe break." test.
                     {B2, S1} = more(S),
@@ -158,17 +163,23 @@ read_escaped_field(B, S=#csvp{quote_delim_cp = Pat}) ->
             {<<B/binary, Field/binary>>, B2, S2}
     end.
 
--ifdef(TEST).                          
--include_lib("eunit/include/eunit.hrl").  
-                                          
-read_record_test_() ->                             
-    [?_assertEqual(read_record2(<<"a,b,c">>, #csvp{}), 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+read_record_test_() ->
+    [?_assertEqual(read_record2(<<"a,b,c">>, #csvp{}),
                    {[<<$a>>, <<$b>>, <<$c>>], <<>>, #csvp{}})
-    ,?_assertEqual(read_record2(<<>>, #csvp{}), 
+    ,?_assertEqual(read_record2(<<"a,,c">>, #csvp{}),
+                   {[<<$a>>, <<>>, <<$c>>], <<>>, #csvp{}})
+    ,?_assertEqual(read_record2(<<",">>, #csvp{}),
+                   {[<<>>, <<>>], <<>>, #csvp{}})
+    ,?_assertEqual(read_records(hide_binary(<<"a,\nc,d">>, #csvp{}), 2),
+                   {[[<<$a>>, <<>>], [<<$c>>, <<$d>>]], #csvp{}})
+    ,?_assertEqual(read_record2(<<>>, #csvp{}),
                    {[], <<>>, #csvp{}})
     ,{"More in rhe break."
-     ,?_assertEqual(read_record2(<<$\", $a, $\">>, 
-                                 hide_binary(<<$\", $\a, $\">>, #csvp{})), 
+     ,?_assertEqual(read_record2(<<$\", $a, $\">>,
+                                 hide_binary(<<$\", $\a, $\">>, #csvp{})),
                    {[<<$a, $\", $a>>], <<>>, #csvp{}})}
     ,{"More in the break (test 2)."
      ,?_assertEqual(read_records(hide_binary(<<"a\r">>,
@@ -176,8 +187,8 @@ read_record_test_() ->
                                  2),
                     {[[<<$a>>], [<<$b>>]], #csvp{}})}
     ,{"More in rhe break (test 3)."
-     ,?_assertEqual(read_record2(<<$\", $a>>, 
-                                 hide_binary(<<$\a, $\">>, #csvp{})), 
+     ,?_assertEqual(read_record2(<<$\", $a>>,
+                                 hide_binary(<<$\a, $\">>, #csvp{})),
                    {[<<"aa">>], <<>>, #csvp{}})}
     ].
 
@@ -268,7 +279,7 @@ gen_records(0, _L1, _L2) ->
     [];
 gen_records(N, L1, L2) ->
     [gen_record(L1, L2) | gen_records(N-1, L1, L2)].
-    
+
 
 gen_record(N, L) ->
     bjoin(gen_record1(N, L), <<$,>>).
