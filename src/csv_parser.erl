@@ -6,6 +6,8 @@
 
 -ifdef(BENCHMARK).
 -define(USE_COMMONS, 1).
+-export([run_read_record/2,
+         run_read_records/3]).
 -include_lib("emark/include/emark.hrl").
 -endif.
 
@@ -42,6 +44,7 @@ file_reader_hof(Fd) ->
                 eof -> {<<>>, undefined}
             end
         end.
+
 
 more(S=#csvp{more_fun = M}) when is_function(M) ->
     {B, M1} = M(),
@@ -81,11 +84,11 @@ hide_binary(B2, S=#csvp{more_fun=M}) ->
     S#csvp{more_fun=fun() -> {B2, M} end}.
 
 
-read_record2(<<>>, S=#csvp{more_fun=undefined}) ->
-    {[], <<>>, S};
-read_record2(<<>>, S=#csvp{}) ->
+read_record2(<<>>, S) when ?MORE(S) ->
     {B, S1} = more(S),
-    {[], B, S1};
+    read_record2(B, S1);
+read_record2(<<>>, S) ->
+    {[], <<>>, S};
 read_record2(B, S) ->
     {Field,  B1, S1} = read_field(B, S),
     {Fields, B2, S2} = read_record_delimeter(B1, S1),
@@ -111,21 +114,24 @@ read_record_delimeter(<<"\r", B/binary>>, S) ->
     {[], B, S};
 read_record_delimeter(<<" ", B/binary>>, S) ->
     read_record_delimeter(B, S);
-read_record_delimeter(<<>>, S = #csvp{more_fun = undefined}) ->
-    {[], <<>>, S};
-read_record_delimeter(<<>>, S=#csvp{}) ->
+read_record_delimeter(<<>>, S) when ?MORE(S) ->
     %% get more
     {B, S1} = more(S),
     case B of
         <<>> ->
-            {[], B, S1}; %% eof
+            {[], <<>>, S1}; %% eof
         _ ->
             read_record_delimeter(B, S1)
-    end.
+    end;
+read_record_delimeter(<<>>, S) ->
+    {[], <<>>, S}.
 
 
 read_field(<<$", B/binary>>, S) ->
     read_escaped_field(B, S);
+read_field(<<>>, S) when ?MORE(S) ->
+    {B, S1} = more(S),
+    read_field(B, S1);
 read_field(B, S) ->
     read_non_escaped_field(B, S).
 
@@ -279,7 +285,8 @@ encode_than_decode_records(DecodedRecords) ->
     EncodedRecords = encode_records(DecodedRecords),
     RowsCount = length(DecodedRecords),
     Parser = binary_parser(EncodedRecords),
-    read_records(Parser, RowsCount).
+    {Recs, _P1} = read_records(Parser, RowsCount),
+    Recs.
 
 
 prop_more_fun() ->
@@ -293,7 +300,8 @@ encode_than_tokenize_then_decode_records(DecodedRecords) ->
     Tokenized = bin_split(EncodedRecords),
     RowsCount = length(DecodedRecords),
     Parser = hide_binaries(Tokenized, #csvp{}),
-    read_records(Parser, RowsCount).
+    {Recs, _P1} = read_records(Parser, RowsCount),
+    Recs.
 
 
 bin_split(B) when is_binary(B) ->
@@ -375,11 +383,11 @@ read_record_benchmark(N) ->
 
 
 read_records_benchmark(N) ->
-    Xs = gen_records(N, 20, 15, 10),
-    P = #csvp{},
-    emark:start(?MODULE, run_read_records, 3),
-    [?MODULE:run_read_records(N, X, P) || X <- Xs],
-    ok.
+     Xs = gen_records(N, 20, 15, 10),
+     P = #csvp{},
+     emark:start(?MODULE, run_read_records, 3),
+     [?MODULE:run_read_records(N, X, P) || X <- Xs],
+     ok.
 
 
 gen_records(0, _L1, _L2, L3) ->
