@@ -3,7 +3,7 @@ CSV parser for Erlang
 
 __License__: MIT
 
-__Author__: Uvarov Michael ([`cytozoon@gmail.com`](mailto:cytozoon@gmail.com))
+__Author__: Uvarov Michael ([`arcusfelis@gmail.com`](mailto:arcusfelis@gmail.com))
 
 
 
